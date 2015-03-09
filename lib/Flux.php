@@ -13,6 +13,12 @@ require_once 'functions/getReposVersion.php';
 // Get the SVN revision or GIT hash of the top-level directory (FLUX_ROOT).
 define('FLUX_REPOSVERSION', getReposVersion());
 
+// Auth System
+define('AUTH_HASH_ALGORITHM', 'sha512');
+define('AUTH_ITER_COUNT', 10000);
+define('AUTH_SALT_LEN', 64);
+define('AUTH_HASH_LEN', 64);
+
 /**
  * The Flux class contains methods related to the application on the larger
  * scale. For the most part, it handles application initialization such as
@@ -577,19 +583,110 @@ class Flux {
 			return false;
 		}
 	}
-	
-	/**
-	 * Hashes a password for use in comparison with the login.user_pass column.
-	 *
-	 * @param string $password Plain text password.
-	 * @return string Returns hashed password.
-	 * @access public
-	 */
-	public static function hashPassword($password)
-	{
-		// Default hashing schema is MD5.
-		return md5($password);
-	}
+
+    /**
+     * PBKDF2 key derivation function as defined by RSA's PKCS #5: https://www.ietf.org/rfc/rfc2898.txt
+     * @param string $algorithm - The hash algorithm to use. Recommended: SHA256
+     * @param string $password - The password.
+     * @param string $salt - A salt that is unique to the password.
+     * @param int $count - Iteration count. Higher is better, but slower. Recommended: At least 1000.
+     * @param int $key_length - The length of the derived key in bytes.
+     * @param bool $raw_output - If true, the key is returned in raw binary format. Hex encoded otherwise
+     * @return string A $key_length-byte key derived from the password and salt.
+     * @access private
+     *
+     * Test vectors can be found here: https://www.ietf.org/rfc/rfc6070.txt
+     *
+     * This implementation of PBKDF2 was originally created by https://defuse.ca
+     * With improvements by http://www.variations-of-shadow.com
+     */
+    private static function pbkdf2($algorithm, $password, $salt, $count, $key_length, $raw_output = false)
+    {
+        $algorithm = strtolower($algorithm);
+        if(!in_array($algorithm, hash_algos(), true))
+            trigger_error('PBKDF2 ERROR: Invalid hash algorithm.', E_USER_ERROR);
+        if($count <= 0 || $key_length <= 0)
+            trigger_error('PBKDF2 ERROR: Invalid parameters.', E_USER_ERROR);
+
+        if (function_exists("hash_pbkdf2")) {
+            // The output length is in NIBBLES (4-bits) if $raw_output is false!
+            if (!$raw_output) {
+                $key_length = $key_length * 2;
+            }
+            return hash_pbkdf2($algorithm, $password, $salt, $count, $key_length, $raw_output);
+        }
+
+        $hash_length = strlen(hash($algorithm, "", true));
+        $block_count = ceil($key_length / $hash_length);
+
+        $output = "";
+        for($i = 1; $i <= $block_count; $i++) {
+            // $i encoded as 4 bytes, big endian.
+            $last = $salt . pack("N", $i);
+            // first iteration
+            $last = $xorsum = hash_hmac($algorithm, $last, $password, true);
+            // perform the other $count - 1 iterations
+            for ($j = 1; $j < $count; $j++) {
+                $xorsum ^= ($last = hash_hmac($algorithm, $last, $password, true));
+            }
+            $output .= $xorsum;
+        }
+
+        if($raw_output)
+            return substr($output, 0, $key_length);
+        else
+            return bin2hex(substr($output, 0, $key_length));
+    }
+
+    /**
+     * Hashes a password.
+     *
+     * @param string $password Plain text password.
+     * @param string (optional) $auth_salt Password Salt.
+     * @param int (optional) $auth_iter_count Password iteration count.
+     * @return array Returns hashed password, salt e iterarion count.
+     * @access public
+     */
+    public static function generateHashPassword($password, $auth_salt = null, $auth_iter_count = AUTH_ITER_COUNT)
+    {
+        $hash = array();
+
+        $hash['auth_salt'] = is_null($auth_salt) ? openssl_random_pseudo_bytes(AUTH_SALT_LEN) : $auth_salt;
+        $hash['auth_iter_count'] = $auth_iter_count;
+        $hash['auth_hash'] = pbkdf2(AUTH_HASH_ALGORITHM, $password, $hash['auth_salt'], $hash['auth_iter_count'], AUTH_HASH_LEN, true);
+
+        return $hash;
+    }
+
+    /**
+     * Check
+     *
+     * @param string $password Plain text password.
+     * @param string $auth_salt Password hash.
+     * @param string $auth_salt Password Salt.
+     * @param int $auth_iter_count Password iteration count.
+     * @return bool Returns true if $password matches the $auth_salt.
+     * @access public
+     */
+    public static function checkHashPassword($password, $auth_hash, $auth_salt, $auth_iter_count){
+
+        $hash = generateHashPassword($password, $auth_salt, $auth_iter_count);
+
+        return $auth_hash === $hash['auth_hash'];
+    }
+
+    /**
+     * Hashes a password for use in comparison with the login.user_pass column.
+     *
+     * @param string $password Plain text password.
+     * @return string Returns hashed password.
+     * @access public
+     */
+    public static function md5HashPassword($password)
+    {
+        // Default hashing schema is MD5.
+        return md5($password);
+    }
 	
 	/**
 	 * Get the job class name from a job ID.

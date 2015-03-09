@@ -55,6 +55,16 @@ class Flux_LoginServer extends Flux_BaseServer {
 		
 		return $connection;
 	}
+
+    /**
+     * Backwards compatible
+     *
+     * @param $user
+     * @param $password
+     */
+    private function convert_account_auth($user, $password) {
+        //TODO
+    }
 	
 	/**
 	 * Validate credentials against the login server's database information.
@@ -66,32 +76,45 @@ class Flux_LoginServer extends Flux_BaseServer {
 	 */
 	public function isAuth($username, $password)
 	{
-		if ($this->config->get('UseMD5')) {
-			$password = Flux::hashPassword($password);
-		}
-		
 		if (trim($username) == '' || trim($password) == '') {
 			return false;
 		}
 		
-		$sql  = "SELECT userid FROM {$this->loginDatabase}.login WHERE sex != 'S' AND group_id >= 0 ";
+		$sql  = "SELECT userid, user_pass";
+        if (!$this->config->get('UseLegacyEncryption')) {
+            $sql .= ', auth_hash, auth_salt, auth_iter_count';
+        }
+        $sql  .= " FROM {$this->loginDatabase}.login WHERE sex != 'S' AND group_id >= 0 ";
 		if ($this->config->getNoCase()) {
 			$sql .= 'AND LOWER(userid) = LOWER(?) ';
 		}
 		else {
 			$sql .= 'AND CAST(userid AS BINARY) = ? ';
 		}
-		$sql .= "AND user_pass = ? LIMIT 1";
+		$sql .= "LIMIT 1";
 		$sth  = $this->connection->getStatement($sql);
-		$sth->execute(array($username, $password));
+		$sth->execute(array($username));
 		
 		$res = $sth->fetch();
-		if ($res) {
-			return true;
+
+        if ($res) {
+            if ($this->config->get('UseLegacyEncryption')) {
+                if ($this->config->get('UseMD5')) { //Old MD5
+                    if($res->user_pass === Flux::md5HashPassword($password))
+                        return true;
+                } else {
+                    if($res->user_pass == $password) //Plain Text
+                        return true;
+                }
+            } else {
+                if(empty($res->user_pass) || $res->user_pass == '')
+                    return Flux::checkHashPassword($password, $res->auth_hash, $res->auth_salt, $res->auth_iter_count);
+                else
+                    return $this->convert_account_auth($res, $password); // Backwards Compatible
+            }
 		}
-		else {
-			return false;
-		}
+
+        return false;
 	}
 	
 	/**
@@ -191,7 +214,7 @@ class Flux_LoginServer extends Flux_BaseServer {
 		}
 		
 		if ($this->config->getUseMD5()) {
-			$password = Flux::hashPassword($password);
+			$password = Flux::md5HashPassword($password);
 		}
 		
 		$sql = "INSERT INTO {$this->loginDatabase}.login (userid, user_pass, email, sex, group_id, birthdate) VALUES (?, ?, ?, ?, ?, ?)";

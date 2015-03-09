@@ -45,7 +45,8 @@ return array(
 		'LoginServer'    => array(
 			'Address'  => '127.0.0.1',
 			'Port'     => 6900,
-			'UseMD5'   => true,
+            'UseLegacyEncryption' => false, // Enable support for the legacy (AND INSECURE) passwordencrypt(2) authentication system (NOT RECOMMENDED)
+			'UseMD5'   => false, // If your database used the legacy MD5 encryption, activate this.
 			'NoCase'   => true, // Hercules account case-sensitivity; Default: Case-INsensitive (true).
 			'GroupID'  => 0,    // Default account group ID during registration.
 			//'Database' => 'ragnarok'

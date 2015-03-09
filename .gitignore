@@ -17,3 +17,6 @@ __MACOSX
 
 /data/tmp/*.php
 /data/tmp/*.cache
+
+## Directory-based project format(PHPStorm):
+.idea/
