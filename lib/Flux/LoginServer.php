@@ -57,13 +57,30 @@ class Flux_LoginServer extends Flux_BaseServer {
 	}
 
     /**
-     * Backwards compatible
+     * Backward compatibility
      *
      * @param $user
      * @param $password
+     * @return bool
      */
     private function convert_account_auth($user, $password) {
-        //TODO
+        if ($this->config->get('UseMD5')) { //Old MD5
+            if($user->user_pass !== Flux::md5HashPassword($password))
+                return false;
+        } else {
+            if($user->user_pass != $password) //Plain Text
+                return false;
+        }
+
+        $hash = Flux::generateHashPassword($password);
+
+        $sql = "UPDATE {$this->loginDatabase}.login SET user_pass = ?, auth_hash = ?, auth_salt = ?, auth_iter_count = ? WHERE account_id = ?";
+        $sth  = $this->connection->getStatement($sql);
+
+        if($sth->execute(array('', $hash['auth_hash'], $hash['auth_salt'], $hash['auth_iter_count'], $user->account_id)))
+            return true;
+        else
+            return false;
     }
 	
 	/**
@@ -80,7 +97,7 @@ class Flux_LoginServer extends Flux_BaseServer {
 			return false;
 		}
 		
-		$sql  = "SELECT userid, user_pass";
+		$sql  = "SELECT account_id, user_pass";
         if (!$this->config->get('UseLegacyEncryption')) {
             $sql .= ', auth_hash, auth_salt, auth_iter_count';
         }
@@ -107,7 +124,7 @@ class Flux_LoginServer extends Flux_BaseServer {
                         return true;
                 }
             } else {
-                if(empty($res->user_pass) || $res->user_pass == '')
+                if(empty(trim($res->user_pass)) || trim($res->user_pass) == '')
                     return Flux::checkHashPassword($password, $res->auth_hash, $res->auth_salt, $res->auth_iter_count);
                 else
                     return $this->convert_account_auth($res, $password); // Backwards Compatible
@@ -212,15 +229,25 @@ class Flux_LoginServer extends Flux_BaseServer {
 				throw new Flux_RegisterError('E-mail address is already in use', Flux_RegisterError::EMAIL_ADDRESS_IN_USE);
 			}
 		}
-		
-		if ($this->config->getUseMD5()) {
-			$password = Flux::md5HashPassword($password);
-		}
-		
-		$sql = "INSERT INTO {$this->loginDatabase}.login (userid, user_pass, email, sex, group_id, birthdate) VALUES (?, ?, ?, ?, ?, ?)";
-		$sth = $this->connection->getStatement($sql);
-		$res = $sth->execute(array($username, $password, $email, $gender, (int)$this->config->getGroupID(), date('Y-m-d', $birthdatestamp)));
-		
+
+        if($this->config->get('UseLegacyEncryption')) {
+            if ($this->config->getUseMD5()) {
+                $password = Flux::md5HashPassword($password);
+            }
+
+            $sql = "INSERT INTO {$this->loginDatabase}.login (userid, user_pass, email, sex, group_id, birthdate) VALUES (?, ?, ?, ?, ?, ?)";
+            $sth = $this->connection->getStatement($sql);
+            $res = $sth->execute(array($username, $password, $email, $gender, (int)$this->config->getGroupID(), date('Y-m-d', $birthdatestamp)));
+        } else {
+            $hash = Flux::generateHashPassword($password);
+
+            $sql = "INSERT INTO {$this->loginDatabase}.login (userid, user_pass, auth_hash, auth_salt, auth_iter_count, email, sex, group_id, birthdate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+            $sth = $this->connection->getStatement($sql);
+            $res = $sth->execute(array($username, '', $hash['auth_hash'], $hash['auth_salt'], $hash['auth_iter_count'], $email, $gender, (int)$this->config->getGroupID(), date('Y-m-d', $birthdatestamp)));
+
+            $password = ''; //Cannot Log The password!
+        }
+
 		if ($res) {
 			$idsth = $this->connection->getStatement("SELECT LAST_INSERT_ID() AS account_id");
 			$idsth->execute();

@@ -653,7 +653,7 @@ class Flux {
 
         $hash['auth_salt'] = is_null($auth_salt) ? openssl_random_pseudo_bytes(AUTH_SALT_LEN) : $auth_salt;
         $hash['auth_iter_count'] = $auth_iter_count;
-        $hash['auth_hash'] = pbkdf2(AUTH_HASH_ALGORITHM, $password, $hash['auth_salt'], $hash['auth_iter_count'], AUTH_HASH_LEN, true);
+        $hash['auth_hash'] = Flux::pbkdf2(AUTH_HASH_ALGORITHM, $password, $hash['auth_salt'], $hash['auth_iter_count'], AUTH_HASH_LEN, true);
 
         return $hash;
     }
@@ -670,7 +670,7 @@ class Flux {
      */
     public static function checkHashPassword($password, $auth_hash, $auth_salt, $auth_iter_count){
 
-        $hash = generateHashPassword($password, $auth_salt, $auth_iter_count);
+        $hash = Flux::generateHashPassword($password, $auth_salt, $auth_iter_count);
 
         return $auth_hash === $hash['auth_hash'];
     }
